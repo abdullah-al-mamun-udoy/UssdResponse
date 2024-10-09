@@ -53,7 +53,8 @@ import androidx.core.content.ContextCompat
 import com.android.ussdcall.ui.theme.USSDcallTheme
 import java.lang.reflect.Method
 
-val ussdCode: String? = "*222#"
+const val PHONE_CALL_PERMISSION_REQUEST_CODE = 1
+val ussdCode: String? = "+8801864631440"
 val simSlotIndex: Int = 1
 class MainActivity : ComponentActivity() {
     @RequiresApi(Build.VERSION_CODES.O)
@@ -87,25 +88,32 @@ fun MissedCallAlertApp(paddingValues: PaddingValues) {
 
 }
 
-const val PHONE_CALL_PERMISSION_REQUEST_CODE = 1
+
 
 private fun requestPhonePermission(context: Context) {
     if (ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.CALL_PHONE
-        ) != PackageManager.PERMISSION_GRANTED ||
+        ) != PackageManager.PERMISSION_GRANTED &&
         ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.READ_PHONE_STATE
+        ) != PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_PHONE_NUMBERS
         ) != PackageManager.PERMISSION_GRANTED
     ) {
         ActivityCompat.requestPermissions(
             context as Activity,
-            arrayOf(Manifest.permission.CALL_PHONE, Manifest.permission.READ_PHONE_STATE),
-            PHONE_CALL_PERMISSION_REQUEST_CODE
+            arrayOf(
+                Manifest.permission.CALL_PHONE, Manifest.permission.READ_PHONE_STATE, Manifest.permission.READ_PHONE_NUMBERS
+            ),
+            PHONE_CALL_PERMISSION_REQUEST_CODE,
         )
     }
 }
+
 @RequiresApi(Build.VERSION_CODES.Q)
 fun dialUSSDCode(context: Context, ussdCode: String, simSlotIndex: Int) {
     val intent = Intent(Intent.ACTION_CALL).apply {
@@ -115,9 +123,14 @@ fun dialUSSDCode(context: Context, ussdCode: String, simSlotIndex: Int) {
 
     Log.d("dialUSSDCode", "Using SIM slot index: $simSlotIndex")
 
-    if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+    if (ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.CALL_PHONE
+        ) == PackageManager.PERMISSION_GRANTED
+    ) {
         try {
-            val subscriptionManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
+            val subscriptionManager =
+                context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
             val subscriptionInfoList = subscriptionManager.activeSubscriptionInfoList
 
             // Log number of active subscriptions
@@ -131,52 +144,74 @@ fun dialUSSDCode(context: Context, ussdCode: String, simSlotIndex: Int) {
 
                 // Get carrier name
                 val carrierName = subscriptionInfo.carrierName
+
+
                 Log.d("dialUSSDCode", "Carrier Name for SIM slot $simSlotIndex: $carrierName")
 //                getCarrierName(context,subscriptionManager,simSlotIndex)
 
                 // Set the phone account handle for the specific SIM
-                val componentName = ComponentName("com.android.phone", "com.android.services.telephony.TelephonyConnectionService")
+                val componentName = ComponentName(
+                    "com.android.phone",
+                    "com.android.services.telephony.TelephonyConnectionService"
+                )
                 val phoneAccountHandle = PhoneAccountHandle(componentName, subIdForSlot.toString())
                 intent.putExtra(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, phoneAccountHandle)
 
                 context.startActivity(intent)
-                val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+                val telephonyManager =
+                    context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+                val phoneNumber = telephonyManager.line1Number
+                Log.d("dialUSSDCode", "Phone Number: $phoneNumber")
                 try {
-                    telephonyManager.sendUssdRequest(ussdCode, object : TelephonyManager.UssdResponseCallback() {
-                        override fun onReceiveUssdResponse(
-                            telephonyManager: TelephonyManager,
-                            request: String,
-                            response: CharSequence
-                        ) {
-                            Log.d("dialUSSDCode", "USSD Response: $response for request $request")
+                    telephonyManager.sendUssdRequest(
+                        ussdCode,
+                        object : TelephonyManager.UssdResponseCallback() {
+                            override fun onReceiveUssdResponse(
+                                telephonyManager: TelephonyManager,
+                                request: String,
+                                response: CharSequence
+                            ) {
+                                Log.d(
+                                    "dialUSSDCode",
+                                    "USSD Response: $response for request $request"
+                                )
 //                            println("USSD Response: $response for request $request")
-                        }
-
-                        override fun onReceiveUssdResponseFailed(
-                            telephonyManager: TelephonyManager,
-                            request: String,
-                            failureCode: Int
-                        ) {
-                            val failureMessage = when (failureCode) {
-                                TelephonyManager.USSD_ERROR_SERVICE_UNAVAIL -> "Service Unavailable"
-                                TelephonyManager.USSD_RETURN_FAILURE -> "USSD Request Failed"
-                                else -> "Unknown Error"
                             }
-                            Log.e("dialUSSDCode", "USSD Request Failed: $failureMessage for request $request with code $failureCode")
-                        }
-                    }, Handler(Looper.getMainLooper()))
+
+                            override fun onReceiveUssdResponseFailed(
+                                telephonyManager: TelephonyManager,
+                                request: String,
+                                failureCode: Int
+                            ) {
+                                val failureMessage = when (failureCode) {
+                                    TelephonyManager.USSD_ERROR_SERVICE_UNAVAIL -> "Service Unavailable"
+                                    TelephonyManager.USSD_RETURN_FAILURE -> "USSD Request Failed"
+                                    else -> "Unknown Error"
+                                }
+                                Log.e(
+                                    "dialUSSDCode",
+                                    "USSD Request Failed: $failureMessage for request $request with code $failureCode"
+                                )
+                            }
+                        },
+                        Handler(Looper.getMainLooper())
+                    )
 
                 } catch (e: Exception) {
                     Log.e("dialUSSDCode", "Error while executing USSD request: ${e.message}")
                     e.printStackTrace()
                 }
             } else {
-                Log.e("dialUSSDCode", "simSlotIndex $simSlotIndex out of bounds for subscriptionInfoList size: ${subscriptionInfoList.size}")
+                Log.e(
+                    "dialUSSDCode",
+                    "simSlotIndex $simSlotIndex out of bounds for subscriptionInfoList size: ${subscriptionInfoList.size}"
+                )
                 Toast.makeText(context, "Invalid SIM slot index", Toast.LENGTH_SHORT).show()
             }
         } catch (e: Exception) {
             Log.e("dialUSSDCode", "Error while initiating call: ${e.message}", e)
-            Toast.makeText(context, "Error while initiating call: ${e.message}", Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, "Error while initiating call: ${e.message}", Toast.LENGTH_SHORT)
+                .show()
         }
     } else {
         requestPhonePermission(context)
@@ -235,11 +270,23 @@ fun dialUSSDCode(context: Context, ussdCode: String, simSlotIndex: Int) {
 
 
 @RequiresApi(Build.VERSION_CODES.Q)
-private fun getCarrierName(context: Context, subscriptionManager: SubscriptionManager, simSlotIndex: Int): String? {
+private fun getCarrierName(
+    context: Context,
+    subscriptionManager: SubscriptionManager,
+    simSlotIndex: Int
+): String? {
     // Check for READ_PHONE_STATE permission
-    if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+    if (ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_PHONE_STATE
+        ) != PackageManager.PERMISSION_GRANTED
+    ) {
         Log.e("getCarrierName", "READ_PHONE_STATE permission not granted")
-        ActivityCompat.requestPermissions(context as Activity, arrayOf(Manifest.permission.READ_PHONE_STATE), 100)
+        ActivityCompat.requestPermissions(
+            context as Activity,
+            arrayOf(Manifest.permission.READ_PHONE_STATE),
+            100
+        )
         return null // Permission not granted, return null and request permission
     }
 
@@ -257,7 +304,8 @@ private fun getCarrierName(context: Context, subscriptionManager: SubscriptionMa
             null
         }
     } else {
-        val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+        val telephonyManager =
+            context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
         telephonyManager.networkOperatorName // Return the network operator name
     }
 }
@@ -282,7 +330,6 @@ private fun getCarrierName(context: Context, subscriptionManager: SubscriptionMa
 //    }
 //    return null
 //}
-
 
 
 /*@RequiresApi(Build.VERSION_CODES.O)
@@ -336,7 +383,7 @@ fun USSDButton(context: Context) {
     Button(onClick = {
         try {
             if (ussdCode != null) {
-                dialUSSDCode(context, ussdCode, simSlotIndex )
+                dialUSSDCode(context, ussdCode, simSlotIndex)
             }
             ussdSent = true
 //            Toast.makeText(context, "USSD Code Sent Successfully", Toast.LENGTH_SHORT).show()
