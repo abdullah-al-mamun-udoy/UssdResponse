@@ -3,6 +3,7 @@ package com.android.ussdcall
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -11,8 +12,12 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.telecom.PhoneAccountHandle
+import android.telecom.TelecomManager
+import android.telephony.SubscriptionManager
 import android.telephony.TelephonyManager
 import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -46,8 +51,10 @@ import androidx.compose.ui.unit.dp
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import com.android.ussdcall.ui.theme.USSDcallTheme
+import java.lang.reflect.Method
 
-
+val ussdCode: String? = "*222#"
+val simSlotIndex: Int = 1
 class MainActivity : ComponentActivity() {
     @RequiresApi(Build.VERSION_CODES.O)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,7 +70,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-@RequiresApi(Build.VERSION_CODES.O)
+
 @Composable
 fun MissedCallAlertApp(paddingValues: PaddingValues) {
     val context = LocalContext.current
@@ -86,26 +93,197 @@ private fun requestPhonePermission(context: Context) {
     if (ContextCompat.checkSelfPermission(
             context,
             Manifest.permission.CALL_PHONE
+        ) != PackageManager.PERMISSION_GRANTED ||
+        ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.READ_PHONE_STATE
         ) != PackageManager.PERMISSION_GRANTED
     ) {
         ActivityCompat.requestPermissions(
             context as Activity,
-            arrayOf(Manifest.permission.CALL_PHONE),
+            arrayOf(Manifest.permission.CALL_PHONE, Manifest.permission.READ_PHONE_STATE),
             PHONE_CALL_PERMISSION_REQUEST_CODE
         )
     }
 }
-fun dialUSSDCode(context: Context, ussdCode: String) {
-    val intent = Intent(Intent.ACTION_CALL)
-    intent.data = Uri.parse("tel:${Uri.encode(ussdCode)}")
+@RequiresApi(Build.VERSION_CODES.Q)
+fun dialUSSDCode(context: Context, ussdCode: String, simSlotIndex: Int) {
+    val intent = Intent(Intent.ACTION_CALL).apply {
+        data = Uri.parse("tel:${Uri.encode(ussdCode)}")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
 
-    if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE)
-        == PackageManager.PERMISSION_GRANTED) {
-        context.startActivity(intent)
+    Log.d("dialUSSDCode", "Using SIM slot index: $simSlotIndex")
+
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+        try {
+            val subscriptionManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
+            val subscriptionInfoList = subscriptionManager.activeSubscriptionInfoList
+
+            // Log number of active subscriptions
+            Log.d("dialUSSDCode", "Number of active subscriptions: ${subscriptionInfoList.size}")
+
+            if (simSlotIndex < subscriptionInfoList.size) {
+                // Correctly access the subscription info by using simSlotIndex as an index
+                val subscriptionInfo = subscriptionInfoList[simSlotIndex]
+                val subIdForSlot = subscriptionInfo.subscriptionId
+                Log.d("dialUSSDCode", "Subscription ID for SIM slot $simSlotIndex: $subIdForSlot")
+
+                // Get carrier name
+                val carrierName = subscriptionInfo.carrierName
+                Log.d("dialUSSDCode", "Carrier Name for SIM slot $simSlotIndex: $carrierName")
+//                getCarrierName(context,subscriptionManager,simSlotIndex)
+
+                // Set the phone account handle for the specific SIM
+                val componentName = ComponentName("com.android.phone", "com.android.services.telephony.TelephonyConnectionService")
+                val phoneAccountHandle = PhoneAccountHandle(componentName, subIdForSlot.toString())
+                intent.putExtra(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, phoneAccountHandle)
+
+                context.startActivity(intent)
+                val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+                try {
+                    telephonyManager.sendUssdRequest(ussdCode, object : TelephonyManager.UssdResponseCallback() {
+                        override fun onReceiveUssdResponse(
+                            telephonyManager: TelephonyManager,
+                            request: String,
+                            response: CharSequence
+                        ) {
+                            Log.d("dialUSSDCode", "USSD Response: $response for request $request")
+//                            println("USSD Response: $response for request $request")
+                        }
+
+                        override fun onReceiveUssdResponseFailed(
+                            telephonyManager: TelephonyManager,
+                            request: String,
+                            failureCode: Int
+                        ) {
+                            val failureMessage = when (failureCode) {
+                                TelephonyManager.USSD_ERROR_SERVICE_UNAVAIL -> "Service Unavailable"
+                                TelephonyManager.USSD_RETURN_FAILURE -> "USSD Request Failed"
+                                else -> "Unknown Error"
+                            }
+                            Log.e("dialUSSDCode", "USSD Request Failed: $failureMessage for request $request with code $failureCode")
+                        }
+                    }, Handler(Looper.getMainLooper()))
+
+                } catch (e: Exception) {
+                    Log.e("dialUSSDCode", "Error while executing USSD request: ${e.message}")
+                    e.printStackTrace()
+                }
+            } else {
+                Log.e("dialUSSDCode", "simSlotIndex $simSlotIndex out of bounds for subscriptionInfoList size: ${subscriptionInfoList.size}")
+                Toast.makeText(context, "Invalid SIM slot index", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Log.e("dialUSSDCode", "Error while initiating call: ${e.message}", e)
+            Toast.makeText(context, "Error while initiating call: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
     } else {
         requestPhonePermission(context)
     }
 }
+
+
+/*fun dialUSSDCode(context: Context, ussdCode: String, simSlotIndex: Int) {
+    val intent = Intent(Intent.ACTION_CALL).apply {
+        data = Uri.parse("tel:${Uri.encode(ussdCode)}")
+        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    }
+
+    Log.d("dialUSSDCode", "Using SIM slot index: $simSlotIndex")
+
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+        try {
+            val subscriptionManager = context.getSystemService(Context.TELEPHONY_SUBSCRIPTION_SERVICE) as SubscriptionManager
+            val getSubIdMethod: Method = SubscriptionManager::class.java.getDeclaredMethod("getSubId", Int::class.java)
+            getSubIdMethod.isAccessible = true
+
+            // Get the Subscription ID for the specified SIM slot
+            val subIdArray = getSubIdMethod.invoke(subscriptionManager, simSlotIndex) as IntArray
+            if (subIdArray.isNotEmpty()) {
+                // Validate simSlotIndex to ensure it's within bounds
+                if (simSlotIndex < subIdArray.size) {
+                    val subIdForSlot = subIdArray[simSlotIndex]
+                    Log.d("dialUSSDCode", "Subscription ID for SIM slot $simSlotIndex: $subIdForSlot")
+
+                    // Get carrier name
+                    val carrierName = getCarrierName(context, subscriptionManager, simSlotIndex)
+                    Log.d("dialUSSDCode", "Carrier Name for SIM slot $simSlotIndex: $carrierName")
+
+                    // Set the phone account handle for the specific SIM
+                    val componentName = ComponentName("com.android.phone", "com.android.services.telephony.TelephonyConnectionService")
+                    val phoneAccountHandle = PhoneAccountHandle(componentName, subIdForSlot.toString())
+                    intent.putExtra(TelecomManager.EXTRA_PHONE_ACCOUNT_HANDLE, phoneAccountHandle)
+
+                    context.startActivity(intent)
+                } else {
+                    Log.e("dialUSSDCode", "simSlotIndex $simSlotIndex out of bounds for subIdArray size: ${subIdArray.size}")
+                    Toast.makeText(context, "Invalid SIM slot index", Toast.LENGTH_SHORT).show()
+                }
+            } else {
+                Log.e("dialUSSDCode", "No subscription ID found for SIM slot $simSlotIndex")
+                Toast.makeText(context, "No subscription ID found for the selected SIM slot", Toast.LENGTH_SHORT).show()
+            }
+        } catch (e: Exception) {
+            Log.e("dialUSSDCode", "Error while initiating call: ${e.message}", e)
+            Toast.makeText(context, "Error while initiating call: ${e.message}", Toast.LENGTH_SHORT).show()
+        }
+    } else {
+        requestPhonePermission(context)
+    }
+}*/
+
+
+@RequiresApi(Build.VERSION_CODES.Q)
+private fun getCarrierName(context: Context, subscriptionManager: SubscriptionManager, simSlotIndex: Int): String? {
+    // Check for READ_PHONE_STATE permission
+    if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+        Log.e("getCarrierName", "READ_PHONE_STATE permission not granted")
+        ActivityCompat.requestPermissions(context as Activity, arrayOf(Manifest.permission.READ_PHONE_STATE), 100)
+        return null // Permission not granted, return null and request permission
+    }
+
+    return if (Build.VERSION.SDK_INT > Build.VERSION_CODES.LOLLIPOP_MR1) { // API level 22
+        val subscriptionInfoList = subscriptionManager.activeSubscriptionInfoList
+
+        if (subscriptionInfoList.size > 1) {
+            val simInfo = subscriptionInfoList[simSlotIndex]
+            Log.d("getCarrierName", "SIM slot index: $simSlotIndex")
+            simInfo.displayName.toString() // Return the display name for the specific SIM slot
+        } else if (subscriptionInfoList.isNotEmpty()) {
+            subscriptionInfoList[0].displayName.toString() // Return the display name for the single SIM
+        } else {
+            Log.e("getCarrierName", "No active subscription found")
+            null
+        }
+    } else {
+        val telephonyManager = context.getSystemService(Context.TELEPHONY_SERVICE) as TelephonyManager
+        telephonyManager.networkOperatorName // Return the network operator name
+    }
+}
+
+
+// Function to retrieve the carrier name using the Subscription ID
+//@RequiresApi(Build.VERSION_CODES.Q)
+//private fun getCarrierName(context: Context, subscriptionManager: SubscriptionManager, subId: Int): String? {
+//    // Check for READ_PHONE_STATE permission
+//    if (ContextCompat.checkSelfPermission(context, Manifest.permission.READ_PHONE_STATE) != PackageManager.PERMISSION_GRANTED) {
+//        // If permission is not granted, you can request it here or handle the lack of permission
+//        Log.e("getCarrierName", "READ_PHONE_STATE permission not granted")
+//        return null
+//    }
+//
+//    // If permission is granted, retrieve the carrier name
+//    val subscriptionInfoList = subscriptionManager.activeSubscriptionInfoList
+//    for (subscriptionInfo in subscriptionInfoList) {
+//        if (subscriptionInfo.carrierId == subId) {
+//            return subscriptionInfo.carrierName.toString()
+//        }
+//    }
+//    return null
+//}
+
+
 
 /*@RequiresApi(Build.VERSION_CODES.O)
 @SuppressLint("ServiceCast")
@@ -155,11 +333,10 @@ fun dialUSSDCode(context: Context, ussdCode: String) {
 fun USSDButton(context: Context) {
     var ussdSent by remember { mutableStateOf<Boolean?>(null) }
 
-    val ussdCode: String? = "*123#"
     Button(onClick = {
         try {
             if (ussdCode != null) {
-                dialUSSDCode(context, ussdCode)
+                dialUSSDCode(context, ussdCode, simSlotIndex )
             }
             ussdSent = true
 //            Toast.makeText(context, "USSD Code Sent Successfully", Toast.LENGTH_SHORT).show()
