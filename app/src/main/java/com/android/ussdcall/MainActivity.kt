@@ -32,7 +32,8 @@ import androidx.core.content.ContextCompat
 import com.android.ussdcall.ui.theme.USSDcallTheme
 
 const val PHONE_CALL_PERMISSION_REQUEST_CODE = 1
-val ussdCode: String? = "*2#"
+val ussdCode: String? = "**21*016000006#"
+val ussdCancelCode: String? = "##21#" // using for deactivation
 val simSlotIndex: Int = 1 // Change to the desired SIM slot index
 
 class MainActivity : ComponentActivity() {
@@ -75,6 +76,7 @@ class MainActivity : ComponentActivity() {
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             USSDButton(context)
+            USSDCancelButton(context)
         }
     }
 
@@ -193,6 +195,14 @@ class MainActivity : ComponentActivity() {
             ussdCode?.let { dialUSSDCode(context, it, simSlotIndex) }
         }) {
             Text("Dial USSD Code")
+        }
+    }
+    @Composable
+    fun USSDCancelButton(context: Context) {
+        Button(onClick = {
+            ussdCancelCode?.let { dialUSSDCode(context, it, simSlotIndex) }
+        }) {
+            Text("Dial for cancel USSD Code")
         }
     }
 }
